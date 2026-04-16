@@ -1,36 +1,141 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OIDC Demo
 
-## Getting Started
+OpenID Connect (OIDC) の仕組みを、手を動かしながら学ぶためのデモアプリです。
 
-First, run the development server:
+認証ライブラリ (NextAuth 等) を使わず、Authorization Code Flow + PKCE を手動で実装することで、OIDC プロトコルの各ステップを可視化します。
+
+## 背景
+
+社内バックオフィスDXアプリ (lion-frame) の既存認証基盤を、別のアプリケーションから OIDC を使って再利用できるかを検証する目的で開発を始めました。
+
+## 技術スタック
+
+- Next.js 16 (App Router)
+- React 19
+- TypeScript
+- Tailwind CSS 4
+- jose (JWT 署名・検証)
+
+## フェーズ構成
+
+| Phase | 内容 | 状態 |
+|-------|------|------|
+| Phase 1 | OIDC Client (Relying Party) — Google を IdP として利用 | 実装済み |
+| Phase 2 | OIDC Provider (Identity Provider) — 自前で IdP を構築 | 未着手 |
+| Phase 3 | lion-frame への適用設計 (ドキュメントのみ) | 未着手 |
+
+## セットアップ
+
+### 1. 依存パッケージのインストール
+
+```bash
+npm install
+```
+
+### 2. 環境変数の設定
+
+`.env.local` を作成し、以下を設定してください。
+
+```bash
+GOOGLE_CLIENT_ID=<Google Cloud Console の OAuth 2.0 クライアント ID>
+GOOGLE_CLIENT_SECRET=<クライアントシークレット>
+SESSION_SECRET=<32文字以上のランダム文字列>
+```
+
+`SESSION_SECRET` の生成例:
+
+```bash
+openssl rand -base64 32
+```
+
+### 3. Google Cloud Console の設定
+
+1. [Google Cloud Console](https://console.cloud.google.com/) でプロジェクトを作成
+2. 「APIとサービス」>「認証情報」> OAuth 2.0 クライアント ID を作成
+3. 承認済みリダイレクト URI に `http://localhost:3000/api/oidc/callback` を追加
+
+### 4. 開発サーバーの起動
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+http://localhost:3000 にアクセスしてください。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Phase 1: OIDC Client
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+NextAuth 等を使わず、OIDC の Authorization Code Flow + PKCE を手動で実装しています。すべての HTTP リクエスト/レスポンスをフローログに記録し、プロトコルの流れを可視化します。
 
-## Learn More
+### 学べる概念
 
-To learn more about Next.js, take a look at the following resources:
+- Discovery Document (`.well-known/openid-configuration`)
+- Authorization Endpoint / `response_type=code`
+- state (CSRF 防止)、nonce (リプレイ防止)
+- PKCE (`code_verifier` / `code_challenge`)
+- Token Endpoint でのコード交換
+- ID Token の構造 (`header.payload.signature`) と検証
+- Access Token と UserInfo Endpoint
+- Scopes (`openid`, `profile`, `email`)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### ページ構成
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| パス | 内容 |
+|------|------|
+| `/` | OIDC 概要説明 (3つの登場人物、Authorization Code Flow の解説) |
+| `/client` | クライアントダッシュボード (認証状態の表示) |
+| `/client/login` | ログインページ (フローの各ステップ解説 + Google ログインボタン) |
+| `/client/callback` | コールバック結果 (ID Token の 3 分割表示) |
+| `/client/tokens` | ID Token のクレーム一覧テーブルと検証ポイント |
+| `/client/userinfo` | UserInfo Endpoint の呼び出しと結果表示 |
+| `/client/flow-log` | 認証フロー中の全 HTTP リクエスト/レスポンスのタイムライン |
 
-## Deploy on Vercel
+### API Routes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| エンドポイント | 説明 |
+|---------------|------|
+| `GET /api/oidc/auth` | 認可 URL 構築、PKCE/state/nonce 生成、Google へリダイレクト |
+| `GET /api/oidc/callback` | 認可コード交換、ID Token 検証、セッション発行 |
+| `GET /api/oidc/userinfo` | UserInfo Endpoint プロキシ |
+| `GET /api/oidc/session` | 現在のセッション状態を返す |
+| `POST /api/oidc/logout` | セッションクリア |
+| `GET /api/oidc/flow-log` | フローイベント一覧を返す |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## プロジェクト構造
+
+```
+app/
+  page.tsx                       # ランディングページ
+  layout.tsx                     # サイドバー付きルートレイアウト
+  client/
+    page.tsx                     # クライアントダッシュボード
+    login/page.tsx               # ログインページ
+    callback/page.tsx            # コールバック結果
+    tokens/page.tsx              # トークン詳細
+    userinfo/page.tsx            # UserInfo
+    flow-log/page.tsx            # フローログ
+  api/oidc/
+    auth/route.ts                # 認可リクエスト
+    callback/route.ts            # コールバック処理
+    userinfo/route.ts            # UserInfo プロキシ
+    session/route.ts             # セッション取得
+    logout/route.ts              # ログアウト
+    flow-log/route.ts            # フローログ取得
+  components/
+    nav-sidebar.tsx              # サイドバーナビゲーション
+    token-inspector.tsx          # JWT 3分割表示
+    claim-table.tsx              # クレーム一覧テーブル
+    http-exchange.tsx            # HTTP リクエスト/レスポンス表示
+    step-explainer.tsx           # ステップ解説
+    timeline.tsx                 # タイムライン表示
+    code-block.tsx               # コードブロック
+  lib/
+    oidc-client.ts               # Discovery 取得、認可 URL 構築、コード交換、UserInfo 取得
+    jwt-utils.ts                 # JWT デコード・検証 (jose)
+    crypto-utils.ts              # state/nonce/PKCE 生成
+    flow-store.ts                # フローイベントのインメモリ記録
+    types.ts                     # 型定義
+```
+
+## ライセンス
+
+Private
