@@ -10,14 +10,11 @@ import type {
 // Provider の発行者 URL。ポート 3000 固定（デモ用）
 export const PROVIDER_ISSUER = "http://localhost:3000/api/provider";
 
-// ID Token の有効期限（秒）
 const ID_TOKEN_TTL_SECONDS = 3600;
-// Access Token の有効期限（秒）
 const ACCESS_TOKEN_TTL_SECONDS = 3600;
-// 認可コードの有効期限（秒）
 const AUTH_CODE_TTL_SECONDS = 120;
 
-// ---- 鍵ペア（サーバー起動ごとに生成） ----
+// ---- 型定義 ----
 
 type KeyMaterial = {
   privateKey: jose.CryptoKey;
@@ -25,35 +22,30 @@ type KeyMaterial = {
   kid: string;
 };
 
-let keyMaterialPromise: Promise<KeyMaterial> | null = null;
+export type PendingAuthorizationRequest = {
+  id: string;
+  client_id: string;
+  redirect_uri: string;
+  response_type: string;
+  scope: string;
+  state: string;
+  nonce?: string;
+  code_challenge: string;
+  code_challenge_method: "S256";
+  created_at: number;
+};
 
-export function getKeyMaterial(): Promise<KeyMaterial> {
-  if (!keyMaterialPromise) {
-    keyMaterialPromise = (async () => {
-      const { privateKey, publicKey } = await jose.generateKeyPair("RS256", {
-        modulusLength: 2048,
-        extractable: true,
-      });
-      const publicJwk = await jose.exportJWK(publicKey);
-      const kid = createHash("sha256")
-        .update(JSON.stringify(publicJwk))
-        .digest("base64url")
-        .slice(0, 32);
-      return {
-        privateKey,
-        publicJwk: { ...publicJwk, kid, alg: "RS256", use: "sig" },
-        kid,
-      };
-    })();
-  }
-  return keyMaterialPromise;
-}
+type ProviderState = {
+  clients: Map<string, ProviderClient>;
+  users: Map<string, ProviderUser>;
+  authCodes: Map<string, AuthorizationCode>;
+  accessTokens: Map<string, ProviderAccessToken>;
+  pendingRequests: Map<string, PendingAuthorizationRequest>;
+  keyMaterialPromise: Promise<KeyMaterial> | null;
+};
 
-// ---- クライアントレジストリ（インメモリ） ----
+// ---- シード値 ----
 
-const clients = new Map<string, ProviderClient>();
-
-// 初期クライアント（Phase 1 の Client UI からすぐ試せるように）
 export const DEFAULT_LOCAL_CLIENT: ProviderClient = {
   client_id: "local-demo-client",
   client_secret: "local-demo-secret",
@@ -61,34 +53,6 @@ export const DEFAULT_LOCAL_CLIENT: ProviderClient = {
   redirect_uris: ["http://localhost:3000/api/oidc/callback"],
   created_at: Date.now(),
 };
-clients.set(DEFAULT_LOCAL_CLIENT.client_id, DEFAULT_LOCAL_CLIENT);
-
-export function registerClient(input: {
-  client_name: string;
-  redirect_uris: string[];
-}): ProviderClient {
-  const client: ProviderClient = {
-    client_id: `client-${randomBytes(6).toString("hex")}`,
-    client_secret: randomBytes(24).toString("base64url"),
-    client_name: input.client_name,
-    redirect_uris: input.redirect_uris,
-    created_at: Date.now(),
-  };
-  clients.set(client.client_id, client);
-  return client;
-}
-
-export function getClient(clientId: string): ProviderClient | undefined {
-  return clients.get(clientId);
-}
-
-export function listClients(): ProviderClient[] {
-  return Array.from(clients.values());
-}
-
-// ---- テストユーザー ----
-
-const users = new Map<string, ProviderUser>();
 
 const seedUsers: ProviderUser[] = [
   {
@@ -122,29 +86,107 @@ const seedUsers: ProviderUser[] = [
     family_name: "Chen",
   },
 ];
-for (const u of seedUsers) users.set(u.sub, u);
+
+// ---- グローバル state ----
+// Next.js (Turbopack) では RSC と Route Handler が別モジュールインスタンスとして
+// 読み込まれることがあるため、globalThis 経由で state を共有する。
+// HMR 後も Map が保持される副次効果もある。
+
+const globalRef = globalThis as typeof globalThis & {
+  __oidcProviderState?: ProviderState;
+};
+
+function getState(): ProviderState {
+  if (!globalRef.__oidcProviderState) {
+    const clients = new Map<string, ProviderClient>();
+    clients.set(DEFAULT_LOCAL_CLIENT.client_id, DEFAULT_LOCAL_CLIENT);
+
+    const users = new Map<string, ProviderUser>();
+    for (const u of seedUsers) users.set(u.sub, u);
+
+    globalRef.__oidcProviderState = {
+      clients,
+      users,
+      authCodes: new Map(),
+      accessTokens: new Map(),
+      pendingRequests: new Map(),
+      keyMaterialPromise: null,
+    };
+  }
+  return globalRef.__oidcProviderState;
+}
+
+// ---- 鍵ペア ----
+
+export function getKeyMaterial(): Promise<KeyMaterial> {
+  const state = getState();
+  if (!state.keyMaterialPromise) {
+    state.keyMaterialPromise = (async () => {
+      const { privateKey, publicKey } = await jose.generateKeyPair("RS256", {
+        modulusLength: 2048,
+        extractable: true,
+      });
+      const publicJwk = await jose.exportJWK(publicKey);
+      const kid = createHash("sha256")
+        .update(JSON.stringify(publicJwk))
+        .digest("base64url")
+        .slice(0, 32);
+      return {
+        privateKey,
+        publicJwk: { ...publicJwk, kid, alg: "RS256", use: "sig" },
+        kid,
+      };
+    })();
+  }
+  return state.keyMaterialPromise;
+}
+
+// ---- クライアントレジストリ ----
+
+export function registerClient(input: {
+  client_name: string;
+  redirect_uris: string[];
+}): ProviderClient {
+  const client: ProviderClient = {
+    client_id: `client-${randomBytes(6).toString("hex")}`,
+    client_secret: randomBytes(24).toString("base64url"),
+    client_name: input.client_name,
+    redirect_uris: input.redirect_uris,
+    created_at: Date.now(),
+  };
+  getState().clients.set(client.client_id, client);
+  return client;
+}
+
+export function getClient(clientId: string): ProviderClient | undefined {
+  return getState().clients.get(clientId);
+}
+
+export function listClients(): ProviderClient[] {
+  return Array.from(getState().clients.values());
+}
+
+// ---- ユーザー ----
 
 export function listUsers(): ProviderUser[] {
-  return Array.from(users.values());
+  return Array.from(getState().users.values());
 }
 
 export function getUserBySub(sub: string): ProviderUser | undefined {
-  return users.get(sub);
+  return getState().users.get(sub);
 }
 
 export function authenticateUser(
   username: string,
   password: string,
 ): ProviderUser | null {
-  for (const u of users.values()) {
+  for (const u of getState().users.values()) {
     if (u.username === username && u.password === password) return u;
   }
   return null;
 }
 
-// ---- 認可コードストア ----
-
-const authCodes = new Map<string, AuthorizationCode>();
+// ---- 認可コード ----
 
 export function issueAuthorizationCode(params: {
   client_id: string;
@@ -162,13 +204,14 @@ export function issueAuthorizationCode(params: {
     issued_at: Date.now(),
     used: false,
   };
-  authCodes.set(code, record);
+  getState().authCodes.set(code, record);
   return record;
 }
 
 export function consumeAuthorizationCode(
   code: string,
 ): AuthorizationCode | null {
+  const { authCodes } = getState();
   const record = authCodes.get(code);
   if (!record) return null;
   if (record.used) return null;
@@ -178,9 +221,7 @@ export function consumeAuthorizationCode(
   return record;
 }
 
-// ---- Access Token ストア ----
-
-const accessTokens = new Map<string, ProviderAccessToken>();
+// ---- Access Token ----
 
 export function issueAccessToken(params: {
   client_id: string;
@@ -197,14 +238,14 @@ export function issueAccessToken(params: {
     issued_at: now,
     expires_at: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
   };
-  accessTokens.set(token, record);
+  getState().accessTokens.set(token, record);
   return record;
 }
 
 export function getAccessToken(
   token: string,
 ): ProviderAccessToken | undefined {
-  const record = accessTokens.get(token);
+  const record = getState().accessTokens.get(token);
   if (!record) return undefined;
   if (Date.now() > record.expires_at) return undefined;
   return record;
@@ -221,7 +262,7 @@ export async function issueIdToken(params: {
 }): Promise<string> {
   const { privateKey, kid } = await getKeyMaterial();
 
-  // at_hash: access_token の SHA-256 を左半分、base64url エンコード
+  // at_hash: access_token の SHA-256 を左半分、base64url
   const atHashBuf = createHash("sha256").update(params.access_token).digest();
   const atHash = atHashBuf
     .subarray(0, atHashBuf.length / 2)
@@ -255,21 +296,6 @@ export async function issueIdToken(params: {
 
 // ---- 認可リクエストの一時保存（同意画面へ渡す） ----
 
-export type PendingAuthorizationRequest = {
-  id: string;
-  client_id: string;
-  redirect_uri: string;
-  response_type: string;
-  scope: string;
-  state: string;
-  nonce?: string;
-  code_challenge: string;
-  code_challenge_method: "S256";
-  created_at: number;
-};
-
-const pendingRequests = new Map<string, PendingAuthorizationRequest>();
-
 export function savePendingRequest(
   req: Omit<PendingAuthorizationRequest, "id" | "created_at">,
 ): PendingAuthorizationRequest {
@@ -279,16 +305,16 @@ export function savePendingRequest(
     id,
     created_at: Date.now(),
   };
-  pendingRequests.set(id, record);
+  getState().pendingRequests.set(id, record);
   return record;
 }
 
 export function getPendingRequest(
   id: string,
 ): PendingAuthorizationRequest | undefined {
-  return pendingRequests.get(id);
+  return getState().pendingRequests.get(id);
 }
 
 export function deletePendingRequest(id: string): void {
-  pendingRequests.delete(id);
+  getState().pendingRequests.delete(id);
 }

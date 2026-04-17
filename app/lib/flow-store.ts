@@ -1,12 +1,22 @@
 import type { FlowEvent } from "./types";
 
-// インメモリでフローイベントを保持（開発サーバーのライフタイム）
-let events: FlowEvent[] = [];
+// Next.js (Turbopack) では RSC と Route Handler が別モジュールインスタンスと
+// して読み込まれることがあるため、globalThis 経由で state を共有する。
+const globalRef = globalThis as typeof globalThis & {
+  __oidcFlowEvents?: FlowEvent[];
+};
+
+function getEventStore(): FlowEvent[] {
+  if (!globalRef.__oidcFlowEvents) {
+    globalRef.__oidcFlowEvents = [];
+  }
+  return globalRef.__oidcFlowEvents;
+}
 
 export function addFlowEvent(
   event: Omit<FlowEvent, "id" | "timestamp">,
 ): void {
-  events.push({
+  getEventStore().push({
     ...event,
     actor: event.actor ?? "client",
     id: crypto.randomUUID(),
@@ -15,15 +25,15 @@ export function addFlowEvent(
 }
 
 export function getFlowEvents(): FlowEvent[] {
-  return [...events];
+  return [...getEventStore()];
 }
 
 export function getFlowEventsByActor(
   actor: FlowEvent["actor"],
 ): FlowEvent[] {
-  return events.filter((e) => e.actor === actor);
+  return getEventStore().filter((e) => e.actor === actor);
 }
 
 export function clearFlowEvents(): void {
-  events = [];
+  globalRef.__oidcFlowEvents = [];
 }
