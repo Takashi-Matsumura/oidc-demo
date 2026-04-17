@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 
+type ProviderKey = "google" | "local" | "lion-frame";
+
 type ProviderOption = {
-  value: "google" | "local";
+  value: ProviderKey;
   label: string;
   hint: string;
 };
@@ -19,10 +21,15 @@ const providers: ProviderOption[] = [
     label: "Local Provider (Phase 2)",
     hint: "このアプリ内部にビルトインされた OIDC Provider。テストユーザーで認証できます。",
   },
+  {
+    value: "lion-frame",
+    label: "LionFrame (Phase 3)",
+    hint: "別プロセスで動作する LionFrame (http://localhost:3000) を IdP として利用。.env.local に LIONFRAME_CLIENT_ID / LIONFRAME_CLIENT_SECRET が必要。",
+  },
 ];
 
 export default function LoginButton() {
-  const [provider, setProvider] = useState<"google" | "local">("google");
+  const [provider, setProvider] = useState<ProviderKey>("google");
   const selected = providers.find((p) => p.value === provider)!;
 
   return (
@@ -67,7 +74,9 @@ export default function LoginButton() {
         にアクセスし、
         {provider === "google"
           ? "Google の認可エンドポイント"
-          : "Local Provider の同意画面"}
+          : provider === "lion-frame"
+            ? "LionFrame の認可エンドポイント（未ログインならログイン画面）"
+            : "Local Provider の同意画面"}
         にリダイレクトされます。
       </p>
     </div>
