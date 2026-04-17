@@ -9,7 +9,7 @@ export default function FlowLogPage() {
   const [loading, setLoading] = useState(true);
 
   const fetchEvents = () => {
-    fetch("/api/oidc/flow-log")
+    fetch("/api/oidc/flow-log?actor=client")
       .then((res) => res.json())
       .then((data) => setEvents(data.events || []))
       .finally(() => setLoading(false));

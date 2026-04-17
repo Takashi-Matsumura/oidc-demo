@@ -2,6 +2,10 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { verifySessionJwt } from "@/app/lib/jwt-utils";
 import { discoverProvider, fetchUserInfo } from "@/app/lib/oidc-client";
+import {
+  resolveProvider,
+  type ProviderKey,
+} from "@/app/lib/client-providers";
 
 export async function GET() {
   const cookieStore = await cookies();
@@ -20,8 +24,11 @@ export async function GET() {
     return NextResponse.json({ error: "Invalid session" }, { status: 401 });
   }
 
+  const providerKey = ((session.provider as string) ?? "google") as ProviderKey;
+  const provider = resolveProvider(providerKey);
+
   try {
-    const discovery = await discoverProvider("https://accounts.google.com");
+    const discovery = await discoverProvider(provider.issuer);
     const userInfo = await fetchUserInfo(
       discovery.userinfo_endpoint,
       session.access_token as string,

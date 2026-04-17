@@ -70,6 +70,54 @@ export type FlowEvent = {
     body: string;
   };
   explanation: string;
+  // どのレイヤーが発生させたイベントか（client=RP 側、provider=OP 側）
+  actor?: "client" | "provider";
+};
+
+// Provider 側: 登録されたクライアント
+export type ProviderClient = {
+  client_id: string;
+  client_secret: string;
+  client_name: string;
+  redirect_uris: string[];
+  created_at: number;
+};
+
+// Provider 側: テストユーザー
+export type ProviderUser = {
+  sub: string;
+  username: string;
+  password: string;
+  email: string;
+  email_verified: boolean;
+  name: string;
+  given_name: string;
+  family_name: string;
+  picture?: string;
+};
+
+// Provider 側: 発行済み認可コード（短命、一度だけ使える）
+export type AuthorizationCode = {
+  code: string;
+  client_id: string;
+  redirect_uri: string;
+  scope: string;
+  nonce?: string;
+  user_sub: string;
+  code_challenge: string;
+  code_challenge_method: "S256";
+  issued_at: number;
+  used: boolean;
+};
+
+// Provider 側: 発行済み Access Token
+export type ProviderAccessToken = {
+  token: string;
+  client_id: string;
+  user_sub: string;
+  scope: string;
+  issued_at: number;
+  expires_at: number;
 };
 
 // セッションに保存するユーザー情報

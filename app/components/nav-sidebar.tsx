@@ -19,6 +19,15 @@ const navItems = [
       { href: "/client/flow-log", label: "フローログ" },
     ],
   },
+  {
+    group: "Phase 2: OIDC Provider",
+    items: [
+      { href: "/provider", label: "ダッシュボード" },
+      { href: "/provider/clients", label: "クライアント" },
+      { href: "/provider/users", label: "ユーザー" },
+      { href: "/provider/logs", label: "Provider ログ" },
+    ],
+  },
 ];
 
 export default function NavSidebar() {

@@ -8,6 +8,7 @@ export function addFlowEvent(
 ): void {
   events.push({
     ...event,
+    actor: event.actor ?? "client",
     id: crypto.randomUUID(),
     timestamp: Date.now(),
   });
@@ -15,6 +16,12 @@ export function addFlowEvent(
 
 export function getFlowEvents(): FlowEvent[] {
   return [...events];
+}
+
+export function getFlowEventsByActor(
+  actor: FlowEvent["actor"],
+): FlowEvent[] {
+  return events.filter((e) => e.actor === actor);
 }
 
 export function clearFlowEvents(): void {

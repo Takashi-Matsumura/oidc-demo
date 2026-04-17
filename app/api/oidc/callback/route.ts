@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { discoverProvider, exchangeCodeForTokens } from "@/app/lib/oidc-client";
 import { verifyIdToken, decodeJwt, createSessionJwt } from "@/app/lib/jwt-utils";
 import { addFlowEvent } from "@/app/lib/flow-store";
+import {
+  resolveProvider,
+  type ProviderKey,
+} from "@/app/lib/client-providers";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -58,12 +62,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Discovery Document を再取得（キャッシュあり）
-  const issuer = "https://accounts.google.com";
-  const discovery = await discoverProvider(issuer);
+  // 認可フロー開始時に保存した provider を参照
+  const providerKey = (cookieStore.get("oidc_provider")?.value ??
+    "google") as ProviderKey;
+  const provider = resolveProvider(providerKey);
 
-  const clientId = process.env.GOOGLE_CLIENT_ID!;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
+  const discovery = await discoverProvider(provider.issuer);
+
+  const clientId = provider.clientId;
+  const clientSecret = provider.clientSecret;
   const redirectUri = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/oidc/callback`;
 
   try {
@@ -101,7 +108,7 @@ export async function GET(request: NextRequest) {
       email: idTokenPayload.email,
       name: idTokenPayload.name,
       picture: idTokenPayload.picture,
-      provider: "google",
+      provider: provider.key,
       // 表示用に生トークン情報も保存
       raw_id_token: tokenResponse.id_token,
       id_token_header: header,
@@ -118,6 +125,7 @@ export async function GET(request: NextRequest) {
     cookieStore.delete("oidc_state");
     cookieStore.delete("oidc_nonce");
     cookieStore.delete("oidc_code_verifier");
+    cookieStore.delete("oidc_provider");
 
     // セッション cookie をセット
     cookieStore.set("oidc_session", sessionJwt, {
